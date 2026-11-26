@@ -20,6 +20,37 @@ jobs:
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
           curl --fail --silent --show-error --ssl-reqd --connect-timeout 20 --max-time 60 --user "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/" --list-only
+      - name: Prepare self-contained test build
+        if: ${{ inputs.publish }}
+        run: |
+          mkdir -p deploy/assets
+          cp index.html deploy/index.html
+          curl --fail --silent --show-error --location --retry 3 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2' -o deploy/assets/supabase.js
+          curl --fail --silent --show-error --location --retry 3 -A 'Mozilla/5.0' 'https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600&display=swap' -o deploy/assets/oswald.css
+          python3 - <<'PY'
+          import pathlib, re, urllib.request
+          root = pathlib.Path('deploy')
+          css = root / 'assets/oswald.css'
+          data = css.read_text()
+          urls = set(re.findall(r'https://fonts\.gstatic\.com/[^)\s]+', data))
+          assert urls, 'No font files found'
+          for i, url in enumerate(sorted(urls)):
+              name = 'oswald-' + str(i) + '.' + url.rsplit('.', 1)[-1]
+              urllib.request.urlretrieve(url, root / 'assets' / name)
+              data = data.replace(url, name)
+          css.write_text(data)
+          html = root / 'index.html'
+          data = html.read_text()
+          replacements = {
+              'https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600&display=swap': './assets/oswald.css',
+              'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2': './assets/supabase.js',
+          }
+          for old, new in replacements.items():
+              assert old in data, old
+              data = data.replace(old, new)
+          html.write_text(data)
+          PY
+          test -s deploy/assets/supabase.js
       - name: Publish test site
         if: ${{ inputs.publish }}
         env:
@@ -27,5 +58,8 @@ jobs:
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
         run: |
-          test -s index.html
-          curl --fail --silent --show-error --ssl-reqd --connect-timeout 20 --max-time 120 --user "$FTP_USERNAME:$FTP_PASSWORD" --upload-file index.html "ftp://$FTP_SERVER/index.html"
+          test -s deploy/index.html
+          for file in deploy/assets/*; do
+            curl --fail --silent --show-error --ssl-reqd --ftp-create-dirs --connect-timeout 20 --max-time 120 --user "$FTP_USERNAME:$FTP_PASSWORD" --upload-file "$file" "ftp://$FTP_SERVER/assets/${file##*/}"
+          done
+          curl --fail --silent --show-error --ssl-reqd --connect-timeout 20 --max-time 120 --user "$FTP_USERNAME:$FTP_PASSWORD" --upload-file deploy/index.html "ftp://$FTP_SERVER/index.html"
