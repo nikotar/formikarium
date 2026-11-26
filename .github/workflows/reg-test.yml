@@ -57,6 +57,12 @@ jobs:
           for old, new in changes:
               assert data.count(old) == 1, old
               data = data.replace(old, new)
+          for old, new in [
+              ("@media(max-width:760px){.calendar-nav:has(.ant-week) strong{flex-basis:190px;width:190px}}", "@media(max-width:760px){.calendar-nav:has(.ant-week) strong{flex-basis:160px;width:160px}}"),
+              ("@media(max-width:340px){.calendar-nav:has(.ant-week) strong{flex-basis:160px;width:160px}}", "@media(max-width:340px){.calendar-nav:has(.ant-week) strong{flex-basis:140px;width:140px}}"),
+          ]:
+              assert data.count(old) == 1, old
+              data = data.replace(old, new)
           html.write_text(data)
           PY
           test -s deploy/assets/supabase.js
