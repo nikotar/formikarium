@@ -48,6 +48,15 @@ jobs:
           for old, new in replacements.items():
               assert old in data, old
               data = data.replace(old, new)
+          # Test-only session persistence patch.
+          changes = [
+              ("if(btn.dataset.tab==='admin'&&admin){$('logout').click();return;}", ""),
+              ("#logout{display:none!important;}", "#logout{margin:8px 0;padding:6px 12px;border-radius:999px;cursor:pointer}"),
+              ("await db.auth.signOut();await reload();setInterval", "const session=checked(await db.auth.getSession()).session;if(session){const user=checked(await db.auth.getUser()).user;if(user?.id===ownerId){admin=true;$('loginBox').style.display='none';$('adminContent').style.display='block';$('logout').style.display='inline-block';}else{checked(await db.auth.signOut());}}await reload();setInterval"),
+          ]
+          for old, new in changes:
+              assert data.count(old) == 1, old
+              data = data.replace(old, new)
           html.write_text(data)
           PY
           test -s deploy/assets/supabase.js
