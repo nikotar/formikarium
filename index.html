@@ -421,6 +421,26 @@ $('standard').value=standard??'';
 $('saveStandard').onclick=()=>{if(!$('standard').checkValidity())return;standard=$('standard').value===''?null:Number($('standard').value);localStorage.setItem('formicariumStandardV3',JSON.stringify(standard));renderAdmin()};
 $('groupName').onchange=$('duration').onchange=()=>{if(admin&&$('sessionPrice'))$('sessionPrice').value=suggestPrice($('groupName').value.trim(),Number($('duration').value))??''};
 $('ownerPrev').onclick=$('prev').onclick;$('ownerNext').onclick=$('next').onclick;
+
+/* Swipe horizontally to navigate one week; keep vertical scrolling and taps. */
+for(const [calendarId,prevId,nextId] of [['calendar','prev','next'],['ownerCalendar','ownerPrev','ownerNext']]){
+ const surface=$(calendarId).closest('.calendar-wrap');
+ surface.style.touchAction='pan-y pinch-zoom';
+ let start=null,suppressUntil=0;
+ surface.addEventListener('touchstart',e=>{start=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
+ surface.addEventListener('touchmove',e=>{if(e.touches.length!==1)start=null},{passive:true});
+ surface.addEventListener('touchcancel',()=>{start=null},{passive:true});
+ surface.addEventListener('touchend',e=>{
+  if(!start||e.touches.length||!e.changedTouches.length){start=null;return}
+  const t=e.changedTouches[0],dx=t.clientX-start.x,dy=t.clientY-start.y;start=null;
+  if(Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.5)return;
+  if(e.cancelable)e.preventDefault();
+  suppressUntil=Date.now()+400;
+  $(dx<0?nextId:prevId).click();
+ },{passive:false});
+ surface.addEventListener('click',e=>{if(Date.now()<suppressUntil){e.preventDefault();e.stopImmediatePropagation()}},true);
+}
+
 {let antWeekRunning=false;for(const id of ['prev','next','ownerPrev','ownerNext']){const button=$(id),original=button.onclick;button.onclick=function(event){if(antWeekRunning)return;antWeekRunning=true;button.classList.add('ant-running');const img=button.querySelector('img');let timer;function finish(){clearTimeout(timer);img.removeEventListener('animationend',finish);button.classList.remove('ant-running');antWeekRunning=false;original.call(button,event)}img.addEventListener('animationend',finish,{once:true});timer=setTimeout(finish,800)}}}
 
 function effective(b){return b.price??suggestPrice(b.group,b.duration)}
