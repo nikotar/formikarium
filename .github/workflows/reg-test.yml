@@ -1,11 +1,19 @@
 name: REG.RU test deployment
 on:
+  push:
+    branches: [preview]
+    paths:
+      - 'index.html'
+      - '.github/workflows/reg-test.yml'
   workflow_dispatch:
     inputs:
       publish:
-        description: Upload index.html after checking FTPS (replaces test placeholder)
+        description: Publish to theantmill.online after checking FTPS
         type: boolean
         default: false
+concurrency:
+  group: reg-test
+  cancel-in-progress: false
 permissions:
   contents: read
 jobs:
@@ -21,7 +29,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --ssl-reqd --connect-timeout 20 --max-time 60 --user "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/" --list-only
       - name: Prepare self-contained test build
-        if: ${{ inputs.publish }}
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
           mkdir -p deploy/assets
           cp index.html deploy/index.html
@@ -48,7 +56,7 @@ jobs:
           for old, new in replacements.items():
               assert old in data, old
               data = data.replace(old, new)
-          # Test-only session persistence patch.
+          # Session persistence patch.
           changes = [
               ("if(btn.dataset.tab==='admin'&&admin){$('logout').click();return;}", ""),
               ("#logout{display:none!important;}", "#logout{margin:8px 0;padding:6px 12px;border-radius:999px;cursor:pointer}"),
@@ -79,12 +87,55 @@ jobs:
           rsvg-convert -w 192 -h 192 deploy/assets/favicon.svg -o deploy/assets/favicon.png
           rsvg-convert -w 180 -h 180 deploy/assets/favicon.svg -o deploy/assets/apple-touch-icon.png
           python3 -m pip install Pillow
+          python3 - <<'ANTPY'
+          import pathlib, re, base64, io
+          from PIL import Image, ImageDraw
+          html = pathlib.Path('deploy/index.html')
+          data = html.read_text()
+          pattern = r'<img class="mobile-crawling-ant"[^>]*src="data:image/png;base64,([^"]+)"[^>]*>'
+          matches = list(re.finditer(pattern, data))
+          assert len(matches) == 2 and matches[0][1] == matches[1][1], 'Unexpected ant markup'
+          orig = Image.open(io.BytesIO(base64.b64decode(matches[0][1]))).convert('RGBA')
+          assert orig.size == (410,190)
+          paths = [[(4,63),(20,45),(40,31),(60,20),(80,12),(105,8),(125,13),(145,28),(165,48),(180,69),(193,91)],[(230,96),(246,78),(265,60),(285,44),(305,34),(326,28),(342,31),(360,41),(380,58),(395,75),(403,92)]]
+          masks = []
+          for i, pts in enumerate(paths):
+              wide = Image.new('L',orig.size)
+              ImageDraw.Draw(wide).line(pts,fill=255,width=19,joint='curve')
+              narrow = Image.new('L',orig.size)
+              ImageDraw.Draw(narrow).line(pts,fill=255,width=9,joint='curve')
+              for y in range(190):
+                  for x in range(410):
+                      if y>=68 and 158<=x<=257:
+                          wide.putpixel((x,y),narrow.getpixel((x,y)))
+                      if (i==0 and x<158 and y<100) or (i==1 and x>=258 and y<105):
+                          wide.putpixel((x,y),255)
+              masks.append(wide)
+          body = Image.new('L',orig.size)
+          for y in range(190):
+              for x in range(410):
+                  a,b = (m.getpixel((x,y)) for m in masks)
+                  assert not (a and b)
+                  body.putpixel((x,y),0 if a or b else 255)
+          parts = []
+          for cls, mask in zip(['ant-body','antenna-left','antenna-right'],[body,*masks]):
+              layer = Image.new('RGBA',orig.size)
+              layer.paste(orig,(0,0),mask)
+              buf = io.BytesIO()
+              layer.save(buf,format='PNG')
+              parts.append('<img class="'+cls+'" alt="" src="data:image/png;base64,'+base64.b64encode(buf.getvalue()).decode()+'">')
+          data,n = re.subn(pattern,lambda _: '<span class="mobile-crawling-ant" aria-hidden="true">'+''.join(parts)+'</span>',data)
+          assert n == 2
+          css = '.mobile-crawling-ant{aspect-ratio:410/190}.mobile-crawling-ant>img{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}.mobile-crawling-ant .antenna-left{transform-origin:46.8% 45%;animation:ant-sway 4.8s ease-in-out infinite}.mobile-crawling-ant .antenna-right{transform-origin:55% 45%;animation:ant-sway 6.2s ease-in-out infinite reverse}@keyframes ant-sway{0%,100%{transform:rotate(0deg)}25%{transform:rotate(12deg)}75%{transform:rotate(-12deg)}}@media(prefers-reduced-motion:reduce){.mobile-crawling-ant>img{animation:none!important}}'
+          data = data.replace('</head>','<style>'+css+'</style></head>',1)
+          html.write_text(data)
+          ANTPY
           python3 -c "from PIL import Image; Image.open('deploy/assets/favicon.png').save('deploy/assets/favicon.ico', sizes=[(16,16),(32,32),(48,48)])"
           test -s deploy/assets/favicon.ico
           test -s deploy/assets/favicon.png
           test -s deploy/assets/supabase.js
       - name: Publish test site
-        if: ${{ inputs.publish }}
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
