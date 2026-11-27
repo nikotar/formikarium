@@ -63,6 +63,10 @@ jobs:
           ]:
               assert data.count(old) == 1, old
               data = data.replace(old, new)
+          logo = re.search(r'<div class="logo"[^>]*>\s*(<svg\b.*?</svg>)', data, re.S)
+          assert logo, 'Header logo not found'
+          (root / 'assets/favicon.svg').write_text(logo.group(1))
+          data = data.replace('</head>', '<link rel="icon" type="image/svg+xml" href="./assets/favicon.svg"></head>', 1)
           html.write_text(data)
           PY
           test -s deploy/assets/supabase.js
