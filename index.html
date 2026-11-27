@@ -478,12 +478,16 @@ function checked(r){if(r.error)throw r.error;return r.data}
 function status(t){$('syncStatus').textContent=t}
 function failure(e){status('Ошибка подключения или сохранения: '+e.message);alert(e.message)}
 async function reload(){
- const gs=checked(await db.from('groups').select('id,name,color,created_at').limit(10000));
- const bs=checked(await db.from('bookings').select(admin?'id,group_id,starts_at,duration_hours,price_total,payment_status':'id,group_id,starts_at,duration_hours').limit(10000));
+ const [groupsResult,bookingsResult]=await Promise.all([
+  db.from('groups').select('id,name,color,created_at').limit(10000),
+  db.from('bookings').select(admin?'id,group_id,starts_at,duration_hours,price_total,payment_status':'id,group_id,starts_at,duration_hours').limit(10000)
+ ]);
+ const gs=checked(groupsResult),bs=checked(bookingsResult);
  bookingHistory=[];if(admin){const history=await db.from('booking_events').select('booking_id,group_name,before_state,occurred_at').eq('action','DELETE').order('occurred_at',{ascending:false}).limit(10000);if(history.error){console.error('Booking history:',history.error);historyError=true}else{bookingHistory=history.data||[];historyError=false}}else historyError=false;
  if(admin){const rr=checked(await db.from('studio_rates').select('rate_key,price'));standard=null;rates=Object.create(null);for(const r of rr){if(r.rate_key==='standard')standard=Number(r.price);else if(r.rate_key.startsWith('group:'))rates[r.rate_key.slice(6)]=Number(r.price)}$('standard').value=standard??'';}
  groupRows=gs;groupColors=Object.create(null);for(const g of gs)if(/^#[0-9a-f]{6}$/i.test(g.color||''))groupColors[g.name]=vividColor(g.color);
- bookings={};for(const r of bs){const d=moscowDate(r.starts_at),start=key(dateKey(d),d.getUTCHours()),g=gs.find(x=>x.id===r.group_id);if(!g)continue;const b={id:r.id,start,group:g.name,duration:r.duration_hours,price:admin?r.price_total:null,payment:admin?r.payment_status:'pending'};for(const k of getSessionKeys(start,b))bookings[k]=b;}
+ const groupsById=new Map(gs.map(g=>[g.id,g]));
+ bookings={};for(const r of bs){const d=moscowDate(r.starts_at),start=key(dateKey(d),d.getUTCHours()),g=groupsById.get(r.group_id);if(!g)continue;const b={id:r.id,start,group:g.name,duration:r.duration_hours,price:admin?r.price_total:null,payment:admin?r.payment_status:'pending'};for(const k of getSessionKeys(start,b))bookings[k]=b;}
  ready=true;status(historyError?'Расписание синхронизировано; история недоступна':'Расписание синхронизировано');renderCalendar();renderAdmin();
 }
 const originalOpen=openModal;openModal=function(...args){if(!ready||busy)return;originalOpen(...args)};
@@ -501,5 +505,5 @@ async function saveRate(key,input){
 }
 $('saveStandard').onclick=()=>saveRate('standard',$('standard'));
 standard=null;rates=Object.create(null);
-(async()=>{try{if(!db)throw Error('Не удалось загрузить Supabase');await db.auth.signOut();await reload();setInterval(()=>{if(!busy&&ready&&!(admin&&document.activeElement?.matches('input'))&&!$('modalBack').classList.contains('show')&&!$('ownerModal').classList.contains('show'))reload().catch(e=>{ready=false;status(e.message)})},15000)}catch(e){failure(e)}})();
+(async()=>{try{if(!db)throw Error('Не удалось загрузить Supabase');await db.auth.signOut();await reload();setInterval(()=>{if(!document.hidden&&!busy&&ready&&!(admin&&document.activeElement?.matches('input'))&&!$('modalBack').classList.contains('show')&&!$('ownerModal').classList.contains('show'))reload().catch(e=>{ready=false;status(e.message)})},15000)}catch(e){failure(e)}})();
 </script></body></html>
