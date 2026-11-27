@@ -262,12 +262,7 @@
     if (!checks.size) return;
 
     const checkLayout = () => {
-      // Collect every layout read before writing visibility changes.
-      const results = [...checks.values()].map((measure) => measure());
-      for (const { stamp, visibility } of results) {
-        if (stamp.style.visibility !== visibility)
-          stamp.style.visibility = visibility;
-      }
+      for (const check of checks.values()) check();
     };
 
     if (typeof ResizeObserver === "undefined") {
@@ -275,15 +270,13 @@
       return;
     }
 
-    const observer = new ResizeObserver((entries) => {
-      const results = entries.map(({ target }) => checks.get(target)());
-      for (const { stamp, visibility } of results) {
-        if (stamp.style.visibility !== visibility)
-          stamp.style.visibility = visibility;
-      }
-    });
+    const observer = new ResizeObserver(checkLayout);
     stampObservers.set(calendar, observer);
-    for (const inner of checks.keys()) observer.observe(inner);
+    for (const inner of checks.keys()) {
+      observer.observe(inner);
+      for (const label of inner.querySelectorAll(".booking-name,.booking-time"))
+        observer.observe(label);
+    }
   }
 
   function drawCalendar(id, title) {
@@ -301,8 +294,7 @@
       date.setUTCDate(start.getUTCDate() + offset);
       return { date, key: dateKey(date) };
     });
-    let occupied = 0,
-      stampIndex = 0;
+    let occupied = 0;
     const stampChecks = new Map();
     cal.style.gridTemplateColumns = `72px repeat(${count},minmax(82px,1fr))`;
     cal.style.minWidth = `${72 + count * 95}px`;
@@ -364,7 +356,7 @@
             ) +
             ":00";
           inner.append(name, time);
-          stampChecks.set(inner, addBookingStamp(inner, b, stampIndex++));
+          stampChecks.set(inner, addBookingStamp(inner, b));
         }
         if (!b) {
           const past = moscowInstant(k).getTime() <= Date.now();
@@ -425,7 +417,7 @@
     "./assets/booking-stamp-09.png",
     "./assets/booking-stamp-10.png",
   ];
-  function addBookingStamp(inner, b, index) {
+  function addBookingStamp(inner, b) {
     let seed = 2166136261;
     for (const ch of String(b.id || b.start + b.group)) {
       seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
@@ -452,7 +444,7 @@
     stamp.style.setProperty("--stamp-opacity", opacity);
     inner.append(stamp);
     // Stable normalized coordinates, independent of viewport and browser zoom.
-    const clipped = index % 3 === 0;
+    const clipped = rnd() < 1 / 3;
     const x = short ? 0.84 + u * 0.06 : 0.22 + u * 0.66;
     const y = short ? 0.5 : 0.56 + v * 0.35;
     const hours = Math.max(1, Number(b.duration) || 1);
@@ -545,25 +537,45 @@
             : safeY
         : `${y * 100}%`,
     );
-    // Only visibility may change when text cannot fit; never choose a new position.
-    return function measureStamp() {
-      const r = stamp.getBoundingClientRect();
-      const cx = (r.left + r.right) / 2,
-        cy = (r.top + r.bottom) / 2;
+    stamp.style.visibility = "hidden";
+    return function positionStamp() {
+      for (const property of ["left", "top", "width", "height"])
+        stamp.style.removeProperty(property);
+
+      const rect = stamp.getBoundingClientRect();
+      const centerX = (rect.left + rect.right) / 2;
+      const centerY = (rect.top + rect.bottom) / 2;
       const radius = stamp.offsetWidth / 2;
-      const collision = [
-        ...inner.querySelectorAll(".booking-name,.booking-time"),
-      ].some((el) => {
-        const t = el.getBoundingClientRect();
-        return (
-          Math.hypot(
-            cx - Math.max(t.left, Math.min(cx, t.right)),
-            cy - Math.max(t.top, Math.min(cy, t.bottom)),
-          ) <
-          radius + 1
-        );
+      const gap = 3;
+      const labels = [...inner.querySelectorAll(".booking-name,.booking-time")]
+        .map((label) => label.getBoundingClientRect());
+      const overlaps = labels.some((label) => {
+        const x = Math.max(label.left, Math.min(centerX, label.right));
+        const y = Math.max(label.top, Math.min(centerY, label.bottom));
+        return Math.hypot(centerX - x, centerY - y) < radius + gap;
       });
-      return { stamp, visibility: collision ? "hidden" : "visible" };
+      if (!overlaps) {
+        stamp.style.visibility = radius > 0 ? "visible" : "hidden";
+        return;
+      }
+
+      const card = inner.getBoundingClientRect();
+      const right = Math.max(...labels.map((label) => label.right))
+        - card.left - inner.clientLeft + gap;
+      const below = Math.max(...labels.map((label) => label.bottom))
+        - card.top - inner.clientTop + gap;
+      const areas = [
+        { x: right, y: gap, width: inner.clientWidth - right - gap, height: inner.clientHeight - 2 * gap },
+        { x: gap, y: below, width: inner.clientWidth - 2 * gap, height: inner.clientHeight - below - gap },
+      ];
+      const [best] = areas.sort((a, b) => Math.min(b.width, b.height) - Math.min(a.width, a.height));
+      const size = Math.min(radius * 2, best.width, best.height);
+      stamp.style.visibility = size > 0 ? "visible" : "hidden";
+      if (size <= 0) return;
+
+      stamp.style.left = `${best.x + best.width / 2}px`;
+      stamp.style.top = `${best.y + best.height / 2}px`;
+      stamp.style.width = stamp.style.height = `${size}px`;
     };
   }
 
