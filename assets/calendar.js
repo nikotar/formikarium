@@ -819,31 +819,6 @@
       .forEach((b) => (unique[b.start] = b));
     return Object.values(unique);
   }
-  // Cancelled sessions belong in the owner journal, outside active totals.
-  let bookingHistory = [];
-  function recordEntries() {
-    const month = dateKey(analyticsDate).slice(0, 7);
-    const cancelled = bookingHistory.flatMap(
-      ({ before_state: snapshot, group_name }) => {
-        if (!snapshot?.starts_at) return [];
-        const date = moscowDate(snapshot.starts_at);
-        const start = key(dateKey(date), date.getUTCHours());
-        if (!start.startsWith(month)) return [];
-        return [
-          {
-            start,
-            group: group_name || "—",
-            duration: Number(snapshot.duration_hours) || 0,
-            cancelled: true,
-          },
-        ];
-      },
-    );
-    return [...monthEntries(analyticsDate), ...cancelled].sort((a, b) =>
-      b.start.localeCompare(a.start),
-    );
-  }
-
   let standard = null;
   function suggestPrice(group, duration) {
     return duration === 3
@@ -1050,40 +1025,32 @@
       $("people").append(tr);
     }
     const records = document.createDocumentFragment();
-    const entries = recordEntries();
-    for (const booking of entries) {
+    for (const booking of arr) {
       const row = document.createElement("tr");
-      const price = booking.cancelled ? null : effective(booking);
-      if (booking.cancelled) row.style.opacity = ".55";
+      const price = effective(booking);
       for (const value of [
         booking.start.replace("T", " "),
         booking.group,
         `${booking.duration} ч`,
         price === null ? "—" : money(price),
-        booking.cancelled
-          ? "Отменено"
-          : booking.payment === "paid"
-            ? "Оплачено"
-            : "Не оплачено",
+        booking.payment === "paid" ? "Оплачено" : "Не оплачено",
       ]) {
         const cell = document.createElement("td");
         cell.textContent = value;
         row.append(cell);
       }
       const action = document.createElement("td");
-      if (!booking.cancelled) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "btn";
-        button.textContent = "Изменить";
-        button.onclick = () => openModal(booking.start, booking, true);
-        action.append(button);
-      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn";
+      button.textContent = "Изменить";
+      button.onclick = () => openModal(booking.start, booking, true);
+      action.append(button);
       row.append(action);
       records.append(row);
     }
     $("recordsBody").replaceChildren(records);
-    $("noRecords").style.display = entries.length ? "none" : "block";
+    $("noRecords").style.display = arr.length ? "none" : "block";
   }
   $("exportBtn").onclick = () => {
     let rows = [
@@ -1095,18 +1062,16 @@
         "Цена за сессию RUB",
         "Оплата",
       ],
-      ...recordEntries().map((b) => [
-        b.start.slice(0, 10),
-        b.start.slice(11),
-        b.group,
-        b.duration,
-        b.cancelled ? "" : effective(b),
-        b.cancelled
-          ? "Отменено"
-          : b.payment === "paid"
-            ? "Оплачено"
-            : "Не оплачено",
-      ]),
+      ...monthEntries(analyticsDate)
+        .sort((a, b) => a.start.localeCompare(b.start))
+        .map((b) => [
+          b.start.slice(0, 10),
+          b.start.slice(11),
+          b.group,
+          b.duration,
+          effective(b),
+          b.payment === "paid" ? "Оплачено" : "Не оплачено",
+        ]),
     ];
     let csv =
         "\ufeff" +
@@ -1164,27 +1129,18 @@
     alert(e.message);
   }
   async function reload() {
-    const [groupsResult, bookingsResult, ratesResult, historyResult] =
-      await Promise.all([
-        db.from("groups").select("id,name,color,created_at").limit(10000),
-        db
-          .from("bookings")
-          .select(
-            admin
-              ? "id,group_id,starts_at,duration_hours,price_total,payment_status"
-              : "id,group_id,starts_at,duration_hours",
-          )
-          .limit(10000),
-        admin ? db.from("studio_rates").select("rate_key,price") : null,
-        admin
-          ? db
-              .from("booking_events")
-              .select("group_name,before_state")
-              .eq("action", "DELETE")
-              .order("occurred_at", { ascending: false })
-              .limit(10000)
-          : null,
-      ]);
+    const [groupsResult, bookingsResult, ratesResult] = await Promise.all([
+      db.from("groups").select("id,name,color").limit(10000),
+      db
+        .from("bookings")
+        .select(
+          admin
+            ? "id,group_id,starts_at,duration_hours,price_total,payment_status"
+            : "id,group_id,starts_at,duration_hours",
+        )
+        .limit(10000),
+      admin ? db.from("studio_rates").select("rate_key,price") : null,
+    ]);
     const gs = checked(groupsResult),
       bs = checked(bookingsResult);
     const groupsById = new Map(gs.map((group) => [group.id, group]));
@@ -1199,7 +1155,6 @@
       }
       $("standard").value = standard ?? "";
     }
-    bookingHistory = historyResult?.data ?? [];
     groupRows = gs;
     groupColors = Object.create(null);
     for (const g of gs)
@@ -1222,11 +1177,7 @@
       for (const k of getSessionKeys(start, b)) bookings[k] = b;
     }
     ready = true;
-    status(
-      historyResult?.error
-        ? "Расписание синхронизировано; история недоступна"
-        : "Расписание синхронизировано",
-    );
+    status("Расписание синхронизировано");
     renderCalendar();
     renderAdmin();
   }
