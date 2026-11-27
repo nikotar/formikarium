@@ -760,12 +760,6 @@
   $("modalBack").onclick = (e) => {
     if (e.target === $("modalBack")) closeModal();
   };
-  $("prev").onclick = () => {
-    moveMonth(-1);
-  };
-  $("next").onclick = () => {
-    moveMonth(1);
-  };
   $("ownerTodayBtn").onclick = $("todayBtn").onclick = () => {
     view = moscowDate();
     renderCalendar();
@@ -853,31 +847,42 @@
       : null;
   }
   $("standard").value = standard ?? "";
-  $("ownerPrev").onclick = $("prev").onclick;
-  $("ownerNext").onclick = $("next").onclick;
-
-  /* Interactive week swipe with coordinated ant and calendar motion. */
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const antRunDuration = 680;
+  const slideOutDuration = 220;
+  const slideInDuration = 280;
   let antWeekRunning = false;
-  function runAnt(button) {
+
+  function animateWeek(grid, surface, button, delta) {
+    if (antWeekRunning) return;
+    if (reducedMotion.matches) {
+      grid.style.transform = "";
+      moveMonth(delta);
+      return;
+    }
+
+    antWeekRunning = true;
     button.classList.add("ant-running");
-    setTimeout(() => button.classList.remove("ant-running"), 680);
+    const width = surface.clientWidth;
+    grid.style.transition = `transform ${slideOutDuration}ms ease-in`;
+    grid.style.transform = `translateX(${-delta * width}px)`;
+
+    setTimeout(() => {
+      grid.style.transition = "none";
+      moveMonth(delta);
+      grid.style.transform = `translateX(${delta * width}px)`;
+      grid.getBoundingClientRect();
+      grid.style.transition = `transform ${slideInDuration}ms ease-out`;
+      grid.style.transform = "";
+    }, slideOutDuration);
+
+    setTimeout(() => {
+      grid.style.transition = "";
+      button.classList.remove("ant-running");
+      antWeekRunning = false;
+    }, antRunDuration);
   }
-  for (const id of ["prev", "next", "ownerPrev", "ownerNext"]) {
-    const button = $(id),
-      original = button.onclick;
-    button.onclick = function (event) {
-      if (antWeekRunning) return;
-      antWeekRunning = true;
-      runAnt(button);
-      setTimeout(
-        () => {
-          antWeekRunning = false;
-          original.call(button, event);
-        },
-        matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 680,
-      );
-    };
-  }
+
   for (const [calendarId, prevId, nextId] of [
     ["calendar", "prev", "next"],
     ["ownerCalendar", "ownerPrev", "ownerNext"],
@@ -887,8 +892,8 @@
     surface.style.touchAction = "pan-y pinch-zoom";
     let start = null,
       suppressUntil = 0;
-    const reduced = () =>
-      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    $(prevId).onclick = () => animateWeek(grid, surface, $(prevId), -1);
+    $(nextId).onclick = () => animateWeek(grid, surface, $(nextId), 1);
     const reset = () => {
       grid.style.transition = "transform 180ms ease-out";
       grid.style.transform = "";
@@ -921,7 +926,7 @@
           start.axis = Math.abs(dx) > Math.abs(dy) * 1.5 ? "x" : "y";
         if (start.axis === "x") {
           if (e.cancelable) e.preventDefault();
-          if (!reduced())
+          if (!reducedMotion.matches)
             grid.style.transform =
               "translateX(" +
               Math.max(
@@ -953,30 +958,7 @@
         if (e.cancelable) e.preventDefault();
         suppressUntil = Date.now() + 750;
         const delta = dx < 0 ? 1 : -1;
-        antWeekRunning = true;
-        runAnt($(delta > 0 ? nextId : prevId));
-        if (reduced()) {
-          moveMonth(delta);
-          grid.style.transform = "";
-          antWeekRunning = false;
-          return;
-        }
-        grid.style.transition = "transform 220ms ease-in";
-        grid.style.transform =
-          "translateX(" + -delta * surface.clientWidth + "px)";
-        setTimeout(() => {
-          grid.style.transition = "none";
-          moveMonth(delta);
-          grid.style.transform =
-            "translateX(" + delta * surface.clientWidth + "px)";
-          grid.getBoundingClientRect();
-          grid.style.transition = "transform 280ms ease-out";
-          grid.style.transform = "";
-          setTimeout(() => {
-            grid.style.transition = "";
-            antWeekRunning = false;
-          }, 460);
-        }, 220);
+        animateWeek(grid, surface, $(delta > 0 ? nextId : prevId), delta);
       },
       { passive: false },
     );
