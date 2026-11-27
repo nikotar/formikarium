@@ -159,6 +159,7 @@ jobs:
           $allowed = [
            '/rest/v1/groups'=>['GET','HEAD','POST'],
            '/rest/v1/bookings'=>['GET','HEAD','POST','PATCH','DELETE'],
+           '/rest/v1/booking_events'=>['GET','HEAD'],
            '/rest/v1/studio_rates'=>['GET','HEAD','POST','PATCH','DELETE'],
            '/rest/v1/rpc/create_own_booking'=>['POST'],
            '/rest/v1/rpc/edit_own_booking'=>['POST'],
