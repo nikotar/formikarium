@@ -69,11 +69,18 @@ jobs:
           data = data.replace('</head>', '<link rel="icon" type="image/svg+xml" href="./assets/favicon.svg"></head>', 1)
           data = data.replace('</head>', '<link rel="icon" type="image/png" sizes="64x64" href="./assets/favicon.png?v=2"></head>', 1)
           data = data.replace('</head>', '<style>:is(#calendar,#ownerCalendar) .slot.booked .inner[data-short="1"]{gap:2px;justify-content:center}:is(#calendar,#ownerCalendar) .inner[data-short="1"] .booking-name{line-height:1.15}:is(#calendar,#ownerCalendar) .inner[data-short="1"] .booking-time{line-height:1.15}@media(max-width:760px) and (orientation:portrait){:is(#calendar,#ownerCalendar) .inner[data-short="1"] .booking-name{line-height:9px}:is(#calendar,#ownerCalendar) .inner[data-short="1"] .booking-time{line-height:8px}}</style></head>', 1)
+          data = re.sub(r'<link rel="icon"[^>]*>', '', data)
+          data = data.replace('</head>', '<link rel="shortcut icon" href="./assets/favicon.ico?v=3" type="image/x-icon"><link rel="icon" href="./assets/favicon.ico?v=3" sizes="16x16 32x32 48x48" type="image/x-icon"><link rel="apple-touch-icon" href="./assets/apple-touch-icon.png"></head>', 1)
           html.write_text(data)
           PY
           sudo apt-get update -qq
           sudo apt-get install -y librsvg2-bin
           rsvg-convert -w 64 -h 64 deploy/assets/favicon.svg -o deploy/assets/favicon.png
+          rsvg-convert -w 192 -h 192 deploy/assets/favicon.svg -o deploy/assets/favicon.png
+          rsvg-convert -w 180 -h 180 deploy/assets/favicon.svg -o deploy/assets/apple-touch-icon.png
+          python3 -m pip install Pillow
+          python3 -c "from PIL import Image; Image.open('deploy/assets/favicon.png').save('deploy/assets/favicon.ico', sizes=[(16,16),(32,32),(48,48)])"
+          test -s deploy/assets/favicon.ico
           test -s deploy/assets/favicon.png
           test -s deploy/assets/supabase.js
       - name: Publish test site
