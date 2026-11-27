@@ -1,11 +1,19 @@
 name: REG.RU production deployment
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - '.github/workflows/reg-prod.yml'
   workflow_dispatch:
     inputs:
       publish:
         description: Publish to theantmill.ru/formicarium after checking FTPS
         type: boolean
         default: false
+concurrency:
+  group: reg-production
+  cancel-in-progress: false
 permissions:
   contents: read
 jobs:
@@ -21,7 +29,7 @@ jobs:
         run: |
           curl --fail --silent --show-error --ssl-reqd --connect-timeout 20 --max-time 60 --user "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/" --list-only
       - name: Prepare self-contained production build
-        if: ${{ inputs.publish }}
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         run: |
           mkdir -p deploy/assets
           cp index.html deploy/index.html
@@ -127,7 +135,7 @@ jobs:
           test -s deploy/assets/favicon.png
           test -s deploy/assets/supabase.js
       - name: Publish production site
-        if: ${{ inputs.publish }}
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         env:
           FTP_SERVER: ${{ secrets.PROD_FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.PROD_FTP_USERNAME }}
