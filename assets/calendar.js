@@ -819,6 +819,31 @@
       .forEach((b) => (unique[b.start] = b));
     return Object.values(unique);
   }
+  // Cancelled sessions belong in the owner journal, outside active totals.
+  let bookingHistory = [];
+  function recordEntries() {
+    const month = dateKey(analyticsDate).slice(0, 7);
+    const cancelled = bookingHistory.flatMap(
+      ({ before_state: snapshot, group_name }) => {
+        if (!snapshot?.starts_at) return [];
+        const date = moscowDate(snapshot.starts_at);
+        const start = key(dateKey(date), date.getUTCHours());
+        if (!start.startsWith(month)) return [];
+        return [
+          {
+            start,
+            group: group_name || "—",
+            duration: Number(snapshot.duration_hours) || 0,
+            cancelled: true,
+          },
+        ];
+      },
+    );
+    return [...monthEntries(analyticsDate), ...cancelled].sort((a, b) =>
+      b.start.localeCompare(a.start),
+    );
+  }
+
   let standard = null;
   function suggestPrice(group, duration) {
     return duration === 3
@@ -1024,33 +1049,45 @@
       tr.lastElementChild.append(input);
       $("people").append(tr);
     }
+    renderRecords();
+  }
+
+  function renderRecords() {
     const records = document.createDocumentFragment();
-    for (const booking of arr) {
+    const entries = recordEntries();
+    for (const booking of entries) {
       const row = document.createElement("tr");
-      const price = effective(booking);
+      const price = booking.cancelled ? null : effective(booking);
+      if (booking.cancelled) row.style.opacity = ".55";
       for (const value of [
         booking.start.replace("T", " "),
         booking.group,
         `${booking.duration} ч`,
         price === null ? "—" : money(price),
-        booking.payment === "paid" ? "Оплачено" : "Не оплачено",
+        booking.cancelled
+          ? "Отменено"
+          : booking.payment === "paid"
+            ? "Оплачено"
+            : "Не оплачено",
       ]) {
         const cell = document.createElement("td");
         cell.textContent = value;
         row.append(cell);
       }
       const action = document.createElement("td");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "btn";
-      button.textContent = "Изменить";
-      button.onclick = () => openModal(booking.start, booking, true);
-      action.append(button);
+      if (!booking.cancelled) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = "Изменить";
+        button.onclick = () => openModal(booking.start, booking, true);
+        action.append(button);
+      }
       row.append(action);
       records.append(row);
     }
     $("recordsBody").replaceChildren(records);
-    $("noRecords").style.display = arr.length ? "none" : "block";
+    $("noRecords").style.display = entries.length ? "none" : "block";
   }
   $("exportBtn").onclick = () => {
     let rows = [
@@ -1062,16 +1099,18 @@
         "Цена за сессию RUB",
         "Оплата",
       ],
-      ...monthEntries(analyticsDate)
-        .sort((a, b) => a.start.localeCompare(b.start))
-        .map((b) => [
-          b.start.slice(0, 10),
-          b.start.slice(11),
-          b.group,
-          b.duration,
-          effective(b),
-          b.payment === "paid" ? "Оплачено" : "Не оплачено",
-        ]),
+      ...recordEntries().map((b) => [
+        b.start.slice(0, 10),
+        b.start.slice(11),
+        b.group,
+        b.duration,
+        b.cancelled ? "" : effective(b),
+        b.cancelled
+          ? "Отменено"
+          : b.payment === "paid"
+            ? "Оплачено"
+            : "Не оплачено",
+      ]),
     ];
     let csv =
         "\ufeff" +
@@ -1128,19 +1167,51 @@
     status("Ошибка подключения или сохранения: " + e.message);
     alert(e.message);
   }
+  let loadSequence = 0;
+
+  async function refreshBookingHistory(sequence) {
+    try {
+      const result = await db
+        .from("booking_events")
+        .select("booking_id,group_name,before_state,occurred_at")
+        .eq("action", "DELETE")
+        .order("occurred_at", { ascending: false })
+        .limit(10000)
+        .abortSignal(AbortSignal.timeout(15000));
+      if (!admin || sequence !== loadSequence) return;
+      bookingHistory = checked(result) ?? [];
+      renderRecords();
+    } catch {
+      if (admin && sequence === loadSequence) {
+        status("Расписание синхронизировано; история отмен недоступна");
+      }
+    }
+  }
+
   async function reload() {
+    const sequence = ++loadSequence;
+    const owner = admin;
+    const signal = AbortSignal.timeout(15000);
     const [groupsResult, bookingsResult, ratesResult] = await Promise.all([
-      db.from("groups").select("id,name,color").limit(10000),
+      db
+        .from("groups")
+        .select("id,name,color,created_at")
+        .limit(10000)
+        .abortSignal(signal),
       db
         .from("bookings")
         .select(
-          admin
+          owner
             ? "id,group_id,starts_at,duration_hours,price_total,payment_status"
             : "id,group_id,starts_at,duration_hours",
         )
-        .limit(10000),
-      admin ? db.from("studio_rates").select("rate_key,price") : null,
+        .limit(10000)
+        .abortSignal(signal),
+      owner
+        ? db.from("studio_rates").select("rate_key,price").abortSignal(signal)
+        : null,
     ]);
+    if (sequence !== loadSequence || owner !== admin) return;
     const gs = checked(groupsResult),
       bs = checked(bookingsResult);
     const groupsById = new Map(gs.map((group) => [group.id, group]));
@@ -1180,6 +1251,7 @@
     status("Расписание синхронизировано");
     renderCalendar();
     renderAdmin();
+    if (owner) void refreshBookingHistory(sequence);
   }
   async function mutate(fn) {
     if (!ready || busy) return;
@@ -1338,6 +1410,8 @@
   };
   const oldLogout = $("logout").onclick;
   $("logout").onclick = async () => {
+    ++loadSequence;
+    bookingHistory = [];
     ready = false;
     bookings = {};
     standard = null;
@@ -1394,19 +1468,27 @@
             checked(await db.auth.signOut());
           }
         }
-        await reload();
-        setInterval(() => {
+        await reload().catch(() => {
+          status("База не ответила. Повторим подключение автоматически.");
+        });
+        let refreshing = false;
+        setInterval(async () => {
           if (
             !busy &&
-            ready &&
+            !refreshing &&
             !(admin && document.activeElement?.matches("input")) &&
             !$("modalBack").classList.contains("show") &&
             !$("ownerModal").classList.contains("show")
-          )
-            reload().catch((e) => {
-              ready = false;
-              status(e.message);
-            });
+          ) {
+            refreshing = true;
+            try {
+              await reload();
+            } catch {
+              status("База не ответила. Повторим подключение автоматически.");
+            } finally {
+              refreshing = false;
+            }
+          }
         }, 15000);
       } catch (e) {
         failure(e);
