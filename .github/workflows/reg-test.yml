@@ -134,6 +134,37 @@ jobs:
           data = data.replace('</head>','<style>'+css+'</style></head>',1)
           html.write_text(data)
           ANTPY
+          python3 - <<'OPTIMIZE'
+          import pathlib, re, base64, hashlib, io
+          from PIL import Image
+          root = pathlib.Path('deploy')
+          html = root / 'index.html'
+          data = html.read_text()
+          before = len(data.encode())
+          assets = {}
+          def extract(match):
+              mime, payload = match.groups()
+              raw = base64.b64decode(payload, validate=True)
+              ext = {'png':'png','jpeg':'jpg','gif':'gif','webp':'webp','svg+xml':'svg'}[mime]
+              if mime == 'png':
+                  image = Image.open(io.BytesIO(raw))
+                  if not getattr(image, 'is_animated', False):
+                      rgba = image.convert('RGBA')
+                      buf = io.BytesIO()
+                      rgba.save(buf, format='WEBP', lossless=True, exact=True, method=6)
+                      candidate = buf.getvalue()
+                      if len(candidate) < len(raw) and Image.open(io.BytesIO(candidate)).convert('RGBA').tobytes() == rgba.tobytes():
+                          raw, ext = candidate, 'webp'
+              name = 'img-' + hashlib.sha256(raw).hexdigest()[:24] + '.' + ext
+              if name not in assets:
+                  (root / 'assets' / name).write_bytes(raw)
+                  assets[name] = len(raw)
+              return './assets/' + name
+          data = re.sub(r'data:image/(png|jpeg|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=]+)', extract, data)
+          assert assets and 'data:image/png;base64,' not in data
+          html.write_text(data)
+          print(f'HTML bytes: {before} -> {len(data.encode())}; unique images: {len(assets)}; image bytes: {sum(assets.values())}')
+          OPTIMIZE
           python3 -c "from PIL import Image; Image.open('deploy/assets/favicon.png').save('deploy/assets/favicon.ico', sizes=[(16,16),(32,32),(48,48)])"
           test -s deploy/assets/favicon.ico
           test -s deploy/assets/favicon.png
